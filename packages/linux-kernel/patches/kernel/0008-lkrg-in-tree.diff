@@ -1,8 +1,8 @@
 diff --git a/security/Kconfig b/security/Kconfig
-index 615205c0113b..eea21440ab24 100644
+index 856faf76030d..f2fa83bffc7e 100644
 --- a/security/Kconfig
 +++ b/security/Kconfig
-@@ -276,6 +276,7 @@ source "security/safesetid/Kconfig"
+@@ -290,6 +290,7 @@ source "security/safesetid/Kconfig"
  source "security/lockdown/Kconfig"
  
  source "security/integrity/Kconfig"
@@ -40,10 +40,10 @@ index 000000000000..afbbab098977
 +	  If you are unsure how to answer this question, answer M.
 diff --git a/security/lkrg/Makefile b/security/lkrg/Makefile
 new file mode 100644
-index 000000000000..181eaef48ed3
+index 000000000000..8cf5dbdc5caf
 --- /dev/null
 +++ b/security/lkrg/Makefile
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,68 @@
 +# SPDX-License-Identifier: GPL-2.0-only
 +
 +obj-$(CONFIG_SECURITY_LKRG) := p_lkrg.o
@@ -108,6 +108,7 @@ index 000000000000..181eaef48ed3
 +                  modules/exploit_detection/syscalls/pCFI/p_lookup_fast/p_lookup_fast.o \
 +                  modules/exploit_detection/syscalls/p_capable/p_capable.o \
 +                  modules/exploit_detection/syscalls/p_scm_send/p_scm_send.o \
++                  modules/exploit_detection/p_selinux_state.o \
 +                  modules/exploit_detection/p_exploit_detection.o \
 +                  p_lkrg_main.o
 + 
@@ -2254,7 +2255,7 @@ index 000000000000..ea2fde485b4b
 +#endif
 diff --git a/security/lkrg/modules/database/JUMP_LABEL/p_arch_jump_label_transform/p_arch_jump_label_transform.c b/security/lkrg/modules/database/JUMP_LABEL/p_arch_jump_label_transform/p_arch_jump_label_transform.c
 new file mode 100644
-index 000000000000..de3308a765e7
+index 000000000000..fe362546466f
 --- /dev/null
 +++ b/security/lkrg/modules/database/JUMP_LABEL/p_arch_jump_label_transform/p_arch_jump_label_transform.c
 @@ -0,0 +1,232 @@
@@ -2316,7 +2317,7 @@ index 000000000000..de3308a765e7
 +   p_lkrg_counter_lock_unlock(&p_jl_lock, &p_flags);
 +
 +   p_print_log(P_LKRG_INFO,
-+               "[JUMP_LABEL] New modification: type[%s] code[0x%llx] target[0x%llx] key[0x%lx]!\n",
++               "[JUMP_LABEL] New modification: type[%s] code[0x%lx] target[0x%lx] key[0x%lx]!\n",
 +               (p_regs_get_arg2(p_regs) == 1) ? "JUMP_LABEL_JMP" :
 +                                                (p_regs_get_arg2(p_regs) == 0) ? "JUMP_LABEL_NOP" :
 +                                                                                 "UNKNOWN",
@@ -2541,10 +2542,10 @@ index 000000000000..4473e7cb5c78
 +#endif
 diff --git a/security/lkrg/modules/database/JUMP_LABEL/p_arch_jump_label_transform_apply/p_arch_jump_label_transform_apply.c b/security/lkrg/modules/database/JUMP_LABEL/p_arch_jump_label_transform_apply/p_arch_jump_label_transform_apply.c
 new file mode 100644
-index 000000000000..fdc8cd169228
+index 000000000000..c65e36551dc7
 --- /dev/null
 +++ b/security/lkrg/modules/database/JUMP_LABEL/p_arch_jump_label_transform_apply/p_arch_jump_label_transform_apply.c
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,279 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -2619,7 +2620,8 @@ index 000000000000..fdc8cd169228
 +#else
 +      if (p_tmp->len == JUMP_LABEL_NOP_SIZE &&
 +          p_tmp->addr
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0) || \
++   (defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 3))
 +          && p_tmp->opcode) {
 +#else
 +          && p_tmp->detour) {
@@ -4049,10 +4051,10 @@ index 000000000000..ebf75a952ed7
 +#endif
 diff --git a/security/lkrg/modules/database/p_database.c b/security/lkrg/modules/database/p_database.c
 new file mode 100644
-index 000000000000..2af8381ae4cb
+index 000000000000..af1d0901dc27
 --- /dev/null
 +++ b/security/lkrg/modules/database/p_database.c
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,380 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -4366,6 +4368,11 @@ index 000000000000..2af8381ae4cb
 +   }
 +
 +
++#if defined(CONFIG_OPTPROBES)
++   P_SYM(p_wait_for_kprobe_optimizer)();
++#endif
++   smp_mb();
++
 +   p_text_section_lock();
 +
 +   /*
@@ -4410,7 +4417,10 @@ index 000000000000..2af8381ae4cb
 +          p_db.p_module_list_hash,p_db.p_module_kobj_hash);
 +
 +   P_SYM(p_state_init) = 1;
++#if defined(CONFIG_OPTPROBES)
 +   P_SYM(p_wait_for_kprobe_optimizer)();
++#endif
++   smp_mb();
 +
 +#if !defined(CONFIG_GRKERNSEC)
 +   p_text_section_lock();
@@ -4427,10 +4437,10 @@ index 000000000000..2af8381ae4cb
 +}
 diff --git a/security/lkrg/modules/database/p_database.h b/security/lkrg/modules/database/p_database.h
 new file mode 100644
-index 000000000000..ca0a9b97e2d0
+index 000000000000..a6cfcec86c17
 --- /dev/null
 +++ b/security/lkrg/modules/database/p_database.h
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,222 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -4613,11 +4623,14 @@ index 000000000000..ca0a9b97e2d0
 +
 +static inline void p_text_section_lock(void) {
 +
++#if !defined(P_LKRG_DEBUG_BUILD)
++   lockdep_off();
++#endif
 +#if defined(CONFIG_DYNAMIC_FTRACE)
 +   mutex_lock(P_SYM(p_ftrace_lock));
 +#endif
 +   /* We are heavily consuming module list here - take 'module_mutex' */
-+   mutex_lock(&module_mutex);
++   mutex_lock(P_SYM(p_module_mutex));
 +   while (mutex_is_locked(P_SYM(p_jump_label_mutex)))
 +      schedule();
 +   mutex_lock(P_SYM(p_text_mutex));
@@ -4627,10 +4640,14 @@ index 000000000000..ca0a9b97e2d0
 +
 +   mutex_unlock(P_SYM(p_text_mutex));
 +   /* Release the 'module_mutex' */
-+   mutex_unlock(&module_mutex);
++   mutex_unlock(P_SYM(p_module_mutex));
 +#if defined(CONFIG_DYNAMIC_FTRACE)
 +   mutex_unlock(P_SYM(p_ftrace_lock));
 +#endif
++#if !defined(P_LKRG_DEBUG_BUILD)
++   lockdep_on();
++#endif
++
 +}
 +
 +int p_create_database(void);
@@ -4718,7 +4735,7 @@ index 000000000000..def139b6b40b
 +#endif
 diff --git a/security/lkrg/modules/exploit_detection/arch/x86/p_ed_x86_arch.h b/security/lkrg/modules/exploit_detection/arch/x86/p_ed_x86_arch.h
 new file mode 100644
-index 000000000000..533f5ec5b096
+index 000000000000..693a184c5d0f
 --- /dev/null
 +++ b/security/lkrg/modules/exploit_detection/arch/x86/p_ed_x86_arch.h
 @@ -0,0 +1,236 @@
@@ -4749,7 +4766,7 @@ index 000000000000..533f5ec5b096
 + */
 +#define P_PCFI_X86_WP     0x1
 +#define P_PCFI_X86_SMEP   0x2
-+#define P_PCFI_X86_SMAP   0x3
++#define P_PCFI_X86_SMAP   0x4
 +
 +#define P_IS_WP_FLAG_ENABLED(x)   (x & P_PCFI_X86_WP)
 +#define P_IS_SMEP_FLAG_ENABLED(x) (x & P_PCFI_X86_SMEP)
@@ -4960,10 +4977,10 @@ index 000000000000..533f5ec5b096
 +#endif
 diff --git a/security/lkrg/modules/exploit_detection/p_exploit_detection.c b/security/lkrg/modules/exploit_detection/p_exploit_detection.c
 new file mode 100644
-index 000000000000..871ea61bccbb
+index 000000000000..cec81ccff7ee
 --- /dev/null
 +++ b/security/lkrg/modules/exploit_detection/p_exploit_detection.c
-@@ -0,0 +1,2383 @@
+@@ -0,0 +1,2345 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -6638,7 +6655,8 @@ index 000000000000..871ea61bccbb
 +      }
 +   } while(1);
 +
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
++#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)) || \
++     (defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8, 3))
 +   if (p_ed_guard_globals.p_selinux.p_selinux_enabled != *P_SYM(p_selinux_enabled)) {
 +      p_print_log(P_LKRG_CRIT,
 +             "<Exploit Detection> Detected data corruption against SELINUX! 'selinux_enabled' has "
@@ -6648,13 +6666,12 @@ index 000000000000..871ea61bccbb
 +   }
 +#endif
 +
-+#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-+   if (p_ed_guard_globals.p_selinux.p_selinux_state.enforcing != P_SYM(p_selinux_state)->enforcing) {
++#ifdef P_SELINUX_VERIFY
++   if (p_selinux_state_changed()) {
 +      p_print_log(P_LKRG_CRIT,
 +             "<Exploit Detection> Detected data corruption against SELINUX! 'selinux_state->enforcing' has "
 +                                  "different value [%d vs %d] than expected!\n",
-+                                  P_SYM(p_selinux_state)->enforcing,p_ed_guard_globals.p_selinux.p_selinux_state.enforcing);
++                                  p_selinux_state_enforcing(), p_ed_guard_globals.p_selinux.p_selinux_enforcing);
 +
 +      switch (P_CTRL(p_kint_enforce)) {
 +
@@ -6666,46 +6683,17 @@ index 000000000000..871ea61bccbb
 +
 +         case 1:
 +           p_print_log(P_LKRG_CRIT, "Original value will be restored!\n");
-+           P_SYM(p_selinux_state)->enforcing = p_ed_guard_globals.p_selinux.p_selinux_state.enforcing;
++           p_selinux_state_restore();
 +           break;
 +
 +         case 0:
 +           p_print_log(P_LKRG_CRIT, "Accepting new state!\n");
-+           p_ed_guard_globals.p_selinux.p_selinux_state.enforcing = P_SYM(p_selinux_state)->enforcing;
++           p_selinux_state_update();
 +           break;
 +
 +      }
 +
 +   }
-+ #else
-+   if (p_ed_guard_globals.p_selinux.p_selinux_enforcing != *P_SYM(p_selinux_enforcing)) {
-+      p_print_log(P_LKRG_CRIT,
-+             "<Exploit Detection> Detected data corruption against SELINUX! 'selinux_enforcing' has "
-+                                  "different value [%d vs %d] than expected. Original value will be restored!\n",
-+                                  *P_SYM(p_selinux_enforcing),p_ed_guard_globals.p_selinux.p_selinux_enforcing);
-+
-+      switch (P_CTRL(p_kint_enforce)) {
-+
-+         /* Panic */
-+         case 2:
-+           // OK, we need to crash the kernel now
-+           panic(P_LKRG_SIGNATURE "SELinux Integrity verification failed! Killing the kernel...\n");
-+           break;
-+
-+         case 1:
-+           p_print_log(P_LKRG_CRIT, "Original value will be restored!\n");
-+           *P_SYM(p_selinux_enforcing) = p_ed_guard_globals.p_selinux.p_selinux_enforcing;
-+           break;
-+
-+         case 0:
-+           p_print_log(P_LKRG_CRIT, "Accepting new state!\n");
-+           p_ed_guard_globals.p_selinux.p_selinux_enforcing = *P_SYM(p_selinux_enforcing);
-+           break;
-+
-+      }
-+
-+   }
-+ #endif
 +#endif
 +   p_lkrg_counter_lock_unlock(&p_ed_guard_globals.p_selinux_lock, &p_flags);
 +}
@@ -7246,32 +7234,13 @@ index 000000000000..871ea61bccbb
 +   }
 +
 +#ifdef CONFIG_SECURITY_SELINUX
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
++#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)) || \
++     (defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8, 3))
 +   P_SYM(p_selinux_enabled)    = (int *)P_SYM(p_kallsyms_lookup_name)("selinux_enabled");
 +#endif
-+#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-+   P_SYM(p_selinux_state)      = (struct p_selinux_state *)P_SYM(p_kallsyms_lookup_name)("selinux_state");
 +
-+   if (!P_SYM(p_selinux_state)) {
-+      p_print_log(P_LKRG_ERR,
-+             "[ED] ERROR: Can't find 'selinux_state' variable :( Exiting...\n");
-+      p_ret = P_LKRG_GENERAL_ERROR;
-+      goto p_exploit_detection_init_out;
-+   }
-+ #else
-+   P_SYM(p_selinux_enforcing)  = (int *)P_SYM(p_kallsyms_lookup_name)("selinux_enforcing");
-+
-+   if (!P_SYM(p_selinux_enforcing)) {
-+      p_print_log(P_LKRG_ERR,
-+             "[ED] ERROR: Can't find 'selinux_enforcing' variable :( Exiting...\n");
-+      p_ret = P_LKRG_GENERAL_ERROR;
-+      goto p_exploit_detection_init_out;
-+   }
-+ #endif
-+#endif
-+
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
++#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)) || \
++     (defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8, 3))
 +   if (!P_SYM(p_selinux_enabled)) {
 +      p_print_log(P_LKRG_ERR,
 +             "[ED] ERROR: Can't find 'selinux_enabled' variable :( Exiting...\n");
@@ -7279,6 +7248,23 @@ index 000000000000..871ea61bccbb
 +      goto p_exploit_detection_init_out;
 +   }
 +#endif
++   // SELinux information
++#ifdef P_SELINUX_VERIFY
++   if (p_selinux_state_init()) {
++      p_print_log(P_LKRG_ERR,
++             "ERROR: Can't initialize selinux :(\n");
++      p_ret = P_LKRG_GENERAL_ERROR;
++      goto p_exploit_detection_init_out;
++   }
++#elif defined(CONFIG_GCC_PLUGIN_RANDSTRUCT)
++   p_print_log(P_LKRG_ERR, "LKRG can't enforce SELinux validation "
++                           "(CONFIG_GCC_PLUGIN_RANDSTRUCT detected)\n");
++#endif
++#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)) || \
++     (defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8, 3))
++   p_ed_guard_globals.p_selinux.p_selinux_enabled = *P_SYM(p_selinux_enabled);
++#endif
++   p_lkrg_counter_lock_init(&p_ed_guard_globals.p_selinux_lock);
 +#endif
 +
 +   if (p_init_rb_ed_pids()) {
@@ -7290,21 +7276,6 @@ index 000000000000..871ea61bccbb
 +
 +   // Dump processes and threads
 +   p_iterate_processes(p_dump_task_f,0x0);
-+
-+#ifdef CONFIG_SECURITY_SELINUX
-+   // SELinux information
-+#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-+   p_ed_guard_globals.p_selinux.p_selinux_state.enforcing = P_SYM(p_selinux_state)->enforcing;
-+ #else
-+   p_ed_guard_globals.p_selinux.p_selinux_enforcing = *P_SYM(p_selinux_enforcing);
-+ #endif
-+#endif
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
-+   p_ed_guard_globals.p_selinux.p_selinux_enabled = *P_SYM(p_selinux_enabled);
-+#endif
-+   p_lkrg_counter_lock_init(&p_ed_guard_globals.p_selinux_lock);
-+#endif
 +
 +   p_ret = P_LKRG_SUCCESS;
 +
@@ -7332,6 +7303,10 @@ index 000000000000..871ea61bccbb
 +
 +   const struct p_functions_hooks *p_fh_it;
 +
++#if !defined(P_LKRG_DEBUG_BUILD)
++   lockdep_off();
++#endif
++
 +   for (p_fh_it = p_functions_hooks_array; p_fh_it->name != NULL; p_fh_it++) {
 +      p_fh_it->uninstall();
 +   }
@@ -7345,14 +7320,18 @@ index 000000000000..871ea61bccbb
 +   /* Before deleting cache i should clean each entry! */
 +   p_delete_rb_ed_pids();
 +
++#if !defined(P_LKRG_DEBUG_BUILD)
++   lockdep_on();
++#endif
++
 +   p_print_log(P_LKRG_INFO, "kmem_cache \"p_ed_pids\" destroyed!\n");
 +}
 diff --git a/security/lkrg/modules/exploit_detection/p_exploit_detection.h b/security/lkrg/modules/exploit_detection/p_exploit_detection.h
 new file mode 100644
-index 000000000000..44b9aeef6025
+index 000000000000..8de40484ea60
 --- /dev/null
 +++ b/security/lkrg/modules/exploit_detection/p_exploit_detection.h
-@@ -0,0 +1,591 @@
+@@ -0,0 +1,621 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -7374,8 +7353,6 @@ index 000000000000..44b9aeef6025
 +#define P_EXPLOIT_DETECTION_MAIN_H
 +
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0) && defined(CONFIG_ARCH_HAS_SYSCALL_WRAPPER)
-+
-+  #define P_SYSCALL_LAYOUT_4_17
 +
 +  /*
 +   * Linux kernel 4.17.xx introduced some changes which broke LKRG (and not only LKRG).
@@ -7420,6 +7397,8 @@ index 000000000000..44b9aeef6025
 +
 + #ifdef CONFIG_X86_64
 +
++  #define P_SYSCALL_LAYOUT_4_17
++
 +  #define P_GET_IA32_SYSCALL_NAME(x) P_IA32_SYSCALL_PREFIX(x)
 +  #define P_GET_IA32_COMPAT_SYSCALL_NAME(x) P_IA32_COMPAT_SYSCALL_PREFIX(x)
 +
@@ -7432,7 +7411,33 @@ index 000000000000..44b9aeef6025
 +  #define P_COMPAT_SYSCALL_PREFIX(x) P_IA32_COMPAT_SYSCALL_PREFIX(x)
 +  #define P_NEW_COMPAT_SYSCALL_PREFIX(x) P_IA32_SYSCALL_PREFIX(x)
 +
++ #elif defined(CONFIG_X86_32) && LINUX_VERSION_CODE >= KERNEL_VERSION(5,7,0)
++
++  #define P_SYSCALL_LAYOUT_5_7
++
++  /*
++   * Since Linux kernel 5.7 SYSCALL_WRAPPER's "magic" was backported to x86 (32 bits)
++   * arch as well. Let's correctly handle it here. More about this "magic" can be
++   * found here:
++   *
++   * https://lore.kernel.org/lkml/20200313195144.164260-10-brgerst@gmail.com/T/
++   */
++
++  #define P_GET_IA32_SYSCALL_NAME(x) P_IA32_SYSCALL_PREFIX(x)
++  #define P_GET_IA32_COMPAT_SYSCALL_NAME(x) P_IA32_COMPAT_SYSCALL_PREFIX(x)
++
++  #define P_SYSCALL_PREFIX(x) P_TO_STRING(__ia32_sys_ ## x)
++  #define P_IA32_SYSCALL_PREFIX(x) P_TO_STRING(__ia32_sys_ ## x)
++  #define P_IA32_COMPAT_SYSCALL_PREFIX(x) P_TO_STRING(__ia32_compat_sys_ ## x)
++  #define P_GET_SET_ID_PREFIX(x) P_TO_STRING(__sys_ ## x)
++  #define P_X32_COMPAT_SYSCALL_PREFIX(x) P_TO_STRING(__x32_compat_sys_ ## x)
++
++  #define P_COMPAT_SYSCALL_PREFIX(x) P_IA32_COMPAT_SYSCALL_PREFIX(x)
++  #define P_NEW_COMPAT_SYSCALL_PREFIX(x) P_IA32_SYSCALL_PREFIX(x)
++
 + #elif defined(CONFIG_ARM64)
++
++  #define P_SYSCALL_LAYOUT_4_17
 +
 +  #define P_GET_ARM64_SYSCALL_NAME(x) P_ARM64_SYSCALL_PREFIX(x)
 +  #define P_GET_ARM64_COMPAT_SYSCALL_NAME(x) P_ARM64_COMPAT_SYSCALL_PREFIX(x)
@@ -7491,8 +7496,10 @@ index 000000000000..44b9aeef6025
 +};
 +
 +struct p_selinux_state {
++#if defined(CONFIG_SECURITY_SELINUX_DISABLE) || LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0)
 +    bool disabled;
-+#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
++#endif
++#ifdef P_SELINUX_VERIFY
 +    bool enforcing;
 +#endif
 +    bool checkreqprot;
@@ -7577,7 +7584,7 @@ index 000000000000..44b9aeef6025
 + #define P_VERIFY_ADDR_LIMIT 1
 +#endif
 +/* ARM(64) */
-+#elif defined(CONFIG_ARM) || defined(CONFIG_ARM64)
++#elif defined(CONFIG_ARM) || (defined(CONFIG_ARM64) && LINUX_VERSION_CODE < KERNEL_VERSION(5,11,0))
 + #define P_VERIFY_ADDR_LIMIT 2
 +#endif
 +
@@ -7610,12 +7617,8 @@ index 000000000000..44b9aeef6025
 +#ifdef CONFIG_SECURITY_SELINUX
 +struct p_ed_guard_selinux {
 +
-+#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-+   struct p_selinux_state p_selinux_state;
-+ #else
++#ifdef P_SELINUX_VERIFY
 +   int p_selinux_enforcing;
-+ #endif
 +#endif
 +#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
 +   int p_selinux_enabled;
@@ -7714,6 +7717,12 @@ index 000000000000..44b9aeef6025
 +
 +int p_exploit_detection_init(void);
 +void p_exploit_detection_exit(void);
++
++int p_selinux_state_init(void);
++void p_selinux_state_restore(void);
++void p_selinux_state_update(void);
++int p_selinux_state_changed(void);
++int p_selinux_state_enforcing(void);
 +
 +#ifdef P_LKRG_TASK_OFF_DEBUG
 +void p_debug_off_flag_off(struct p_ed_process *p_source, unsigned int p_id);
@@ -8183,6 +8192,89 @@ index 000000000000..33e5234bf37b
 +   rb->rb_right = NULL;
 +   rb->rb_left = NULL;
 +   RB_CLEAR_NODE(rb);
++}
++
++#endif
+diff --git a/security/lkrg/modules/exploit_detection/p_selinux_state.c b/security/lkrg/modules/exploit_detection/p_selinux_state.c
+new file mode 100644
+index 000000000000..8d1d102f062e
+--- /dev/null
++++ b/security/lkrg/modules/exploit_detection/p_selinux_state.c
+@@ -0,0 +1,77 @@
++/*
++ * pi3's Linux kernel Runtime Guard
++ *
++ * Component:
++ *  - selinux function
++ *
++ * Notes:
++ *  - None
++ *
++ * Timeline:
++ *  - Created: 17.III.2021
++ *
++ * Author:
++ *  - Mariusz Zaborski (https://oshogbo.vexillium.org/)
++ *
++ */
++
++#include "../../p_lkrg_main.h"
++
++#ifdef P_SELINUX_VERIFY
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
++
++int p_selinux_state_init(void) {
++
++   P_SYM(p_selinux_state) = (struct p_selinux_state *)P_SYM(p_kallsyms_lookup_name)("selinux_state");
++
++   if (P_SYM(p_selinux_state) == NULL)
++      return P_LKRG_ERR;
++
++   return P_LKRG_SUCCESS;
++}
++
++void p_selinux_state_restore(void) {
++
++   P_SYM(p_selinux_state)->enforcing = p_ed_guard_globals.p_selinux.p_selinux_enforcing;
++}
++
++
++int p_selinux_state_enforcing(void) {
++
++   return P_SYM(p_selinux_state)->enforcing;
++}
++
++ #else
++int p_selinux_state_init(void) {
++
++   P_SYM(p_selinux_enforcing) = (int *)P_SYM(p_kallsyms_lookup_name)("selinux_enforcing");
++
++   if (P_SYM(p_selinux_enforcing) == NULL)
++      return P_LKRG_ERR;
++
++   p_selinux_state_update();
++   return P_LKRG_SUCCESS;
++}
++
++void p_selinux_state_restore(void) {
++
++   *P_SYM(p_selinux_enforcing) = p_ed_guard_globals.p_selinux.p_selinux_enforcing;
++}
++
++int p_selinux_state_enforcing(void) {
++
++   return *P_SYM(p_selinux_enforcing);
++}
++ #endif
++
++void p_selinux_state_update(void) {
++
++   p_ed_guard_globals.p_selinux.p_selinux_enforcing = p_selinux_state_enforcing();
++}
++
++int p_selinux_state_changed(void) {
++
++   return p_selinux_state_enforcing() != p_ed_guard_globals.p_selinux.p_selinux_enforcing;
 +}
 +
 +#endif
@@ -10960,10 +11052,10 @@ index 000000000000..95f928a57b6b
 +#endif
 diff --git a/security/lkrg/modules/exploit_detection/syscalls/p_call_usermodehelper/p_call_usermodehelper.c b/security/lkrg/modules/exploit_detection/syscalls/p_call_usermodehelper/p_call_usermodehelper.c
 new file mode 100644
-index 000000000000..3a872059a198
+index 000000000000..ac2a7377f31e
 --- /dev/null
 +++ b/security/lkrg/modules/exploit_detection/syscalls/p_call_usermodehelper/p_call_usermodehelper.c
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,159 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -11070,7 +11162,8 @@ index 000000000000..3a872059a198
 +
 +   if (!p_umh_allowed) {
 +p_call_usermodehelper_entry_not_allowed:
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,18,0) && LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,18,0) && LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0) \
++    && !(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(8, 3))
 +      if (!strcmp("none",p_subproc->path) && p_subproc->file) {
 +         p_print_log(P_LKRG_ERR,
 +                "<Exploit Detection> UMH is executing file from memory...\n");
@@ -11101,7 +11194,8 @@ index 000000000000..3a872059a198
 +              break;
 +
 +         }
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,18,0) && LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,18,0) && LINUX_VERSION_CODE < KERNEL_VERSION(5,9,0) \
++    && !(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(8, 3))
 +      }
 +#endif
 +   }
@@ -12288,10 +12382,10 @@ index 000000000000..b50979467e9d
 +#endif
 diff --git a/security/lkrg/modules/exploit_detection/syscalls/p_sel_write_enforce/p_sel_write_enforce.c b/security/lkrg/modules/exploit_detection/syscalls/p_sel_write_enforce/p_sel_write_enforce.c
 new file mode 100644
-index 000000000000..a9efef03c9c8
+index 000000000000..d410896cdd45
 --- /dev/null
 +++ b/security/lkrg/modules/exploit_detection/syscalls/p_sel_write_enforce/p_sel_write_enforce.c
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,97 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -12368,14 +12462,11 @@ index 000000000000..a9efef03c9c8
 +   // Success ?
 +   if (!IS_ERR((void *)p_regs_get_ret(p_regs))) {
 +      // track down new SELinux information
-+#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-+      p_ed_guard_globals.p_selinux.p_selinux_state.enforcing = P_SYM(p_selinux_state)->enforcing;
-+ #else
-+      p_ed_guard_globals.p_selinux.p_selinux_enforcing = *P_SYM(p_selinux_enforcing);
-+ #endif
++#ifdef P_SELINUX_VERIFY
++      p_selinux_state_update();
 +#endif
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
++#if (!defined(RHEL_RELEASE_CODE) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)) || \
++     (defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8, 3))
 +      p_ed_guard_globals.p_selinux.p_selinux_enabled = *P_SYM(p_selinux_enabled);
 +#endif
 +   }
@@ -14256,7 +14347,7 @@ index 000000000000..13179659ae19
 +#endif
 diff --git a/security/lkrg/modules/integrity_timer/p_integrity_timer.c b/security/lkrg/modules/integrity_timer/p_integrity_timer.c
 new file mode 100644
-index 000000000000..f462f35839dd
+index 000000000000..642a33e6633a
 --- /dev/null
 +++ b/security/lkrg/modules/integrity_timer/p_integrity_timer.c
 @@ -0,0 +1,1798 @@
@@ -14710,7 +14801,7 @@ index 000000000000..f462f35839dd
 +                        p_print_log(P_LKRG_INFO,
 +                                    "Lost module is the same as on-going module activity events (system is stable).\n");
 +                     } else {
-+                        p_tmp_mod = find_module(p_module_kobj_tmp[p_tmp_hash].p_name);
++                        p_tmp_mod = P_SYM(p_find_module(p_module_kobj_tmp[p_tmp_hash].p_name));
 +                        if (p_tmp_mod) {
 +                           if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                              P_KINT_HACK_D(p_hack_check);
@@ -14774,7 +14865,7 @@ index 000000000000..f462f35839dd
 +                        }
 +                     }
 +                  } else {
-+                     p_tmp_mod = find_module(p_module_kobj_tmp[p_tmp_hash].p_name);
++                     p_tmp_mod = P_SYM(p_find_module(p_module_kobj_tmp[p_tmp_hash].p_name));
 +                     if (p_tmp_mod) {
 +                        if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                           P_KINT_HACK_D(p_hack_check);
@@ -14915,7 +15006,7 @@ index 000000000000..f462f35839dd
 +                        p_print_log(P_LKRG_INFO,
 +                                    "Lost module is the same as on-going module activity events (system is stable).\n");
 +                     } else {
-+                        p_tmp_mod = find_module(p_module_list_tmp[p_tmp_hash].p_name);
++                        p_tmp_mod = P_SYM(p_find_module(p_module_list_tmp[p_tmp_hash].p_name));
 +                        if (p_tmp_mod) {
 +                           if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                              p_print_log(P_LKRG_INFO,
@@ -14975,7 +15066,7 @@ index 000000000000..f462f35839dd
 +                        }
 +                     }
 +                  } else {
-+                     p_tmp_mod = find_module(p_module_list_tmp[p_tmp_hash].p_name);
++                     p_tmp_mod = P_SYM(p_find_module(p_module_list_tmp[p_tmp_hash].p_name));
 +                     if (p_tmp_mod) {
 +                        if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                           p_print_log(P_LKRG_INFO,
@@ -15154,7 +15245,7 @@ index 000000000000..f462f35839dd
 +                        p_print_log(P_LKRG_INFO,
 +                                    "Lost module is the same as on-going module activity events (system is stable).\n");
 +                     } else {
-+                        p_tmp_mod = find_module(p_db.p_module_list_array[p_tmp_hash].p_name);
++                        p_tmp_mod = P_SYM(p_find_module(p_db.p_module_list_array[p_tmp_hash].p_name));
 +                        if (p_tmp_mod) {
 +                           if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                              p_print_log(P_LKRG_INFO,
@@ -15215,7 +15306,7 @@ index 000000000000..f462f35839dd
 +                        }
 +                     }
 +                  } else {
-+                     p_tmp_mod = find_module(p_db.p_module_list_array[p_tmp_hash].p_name);
++                     p_tmp_mod = P_SYM(p_find_module(p_db.p_module_list_array[p_tmp_hash].p_name));
 +                     if (p_tmp_mod) {
 +                        if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                           p_print_log(P_LKRG_INFO,
@@ -15339,7 +15430,7 @@ index 000000000000..f462f35839dd
 +                        p_print_log(P_LKRG_INFO,
 +                                    "Extra module is the same as on-going module activity events (system is stable).\n");
 +                     } else {
-+                        p_tmp_mod = find_module(p_module_list_tmp[p_tmp_hash].p_name);
++                        p_tmp_mod = P_SYM(p_find_module(p_module_list_tmp[p_tmp_hash].p_name));
 +                        if (p_tmp_mod) {
 +                           if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                              p_print_log(P_LKRG_INFO,
@@ -15402,7 +15493,7 @@ index 000000000000..f462f35839dd
 +                        }
 +                     }
 +                  } else {
-+                     p_tmp_mod = find_module(p_module_list_tmp[p_tmp_hash].p_name);
++                     p_tmp_mod = P_SYM(p_find_module(p_module_list_tmp[p_tmp_hash].p_name));
 +                     if (p_tmp_mod) {
 +                        if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                           p_print_log(P_LKRG_INFO,
@@ -15572,7 +15663,7 @@ index 000000000000..f462f35839dd
 +                        p_print_log(P_LKRG_INFO,
 +                                    "Lost module is the same as on-going module activity events (system is stable).\n");
 +                     } else {
-+                        p_tmp_mod = find_module(p_db.p_module_kobj_array[p_tmp_hash].p_name);
++                        p_tmp_mod = P_SYM(p_find_module(p_db.p_module_kobj_array[p_tmp_hash].p_name));
 +                        if (p_tmp_mod) {
 +                           if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                              p_print_log(P_LKRG_INFO,
@@ -15632,7 +15723,7 @@ index 000000000000..f462f35839dd
 +                        }
 +                     }
 +                  } else {
-+                     p_tmp_mod = find_module(p_db.p_module_kobj_array[p_tmp_hash].p_name);
++                     p_tmp_mod = P_SYM(p_find_module(p_db.p_module_kobj_array[p_tmp_hash].p_name));
 +                     if (p_tmp_mod) {
 +                        if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                           p_print_log(P_LKRG_INFO,
@@ -15755,7 +15846,7 @@ index 000000000000..f462f35839dd
 +                        p_print_log(P_LKRG_INFO,
 +                                    "Extra module is the same as on-going module activity events (system is stable).\n");
 +                     } else {
-+                        p_tmp_mod = find_module(p_module_kobj_tmp[p_tmp_hash].p_name);
++                        p_tmp_mod = P_SYM(p_find_module(p_module_kobj_tmp[p_tmp_hash].p_name));
 +                        if (p_tmp_mod) {
 +                           if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                              p_print_log(P_LKRG_INFO,
@@ -15816,7 +15907,7 @@ index 000000000000..f462f35839dd
 +                        }
 +                     }
 +                  } else {
-+                     p_tmp_mod = find_module(p_module_kobj_tmp[p_tmp_hash].p_name);
++                     p_tmp_mod = P_SYM(p_find_module(p_module_kobj_tmp[p_tmp_hash].p_name));
 +                     if (p_tmp_mod) {
 +                        if (p_tmp_mod->state != MODULE_STATE_LIVE) {
 +                           p_print_log(P_LKRG_INFO,
@@ -16120,10 +16211,10 @@ index 000000000000..5851de77ebcc
 +#endif
 diff --git a/security/lkrg/modules/kmod/p_kmod.c b/security/lkrg/modules/kmod/p_kmod.c
 new file mode 100644
-index 000000000000..1c4fecd75b97
+index 000000000000..68129b406b34
 --- /dev/null
 +++ b/security/lkrg/modules/kmod/p_kmod.c
-@@ -0,0 +1,652 @@
+@@ -0,0 +1,670 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -16164,7 +16255,13 @@ index 000000000000..1c4fecd75b97
 +   P_SYM(p_global_modules)   = (struct list_head *)P_SYM(p_kallsyms_lookup_name)("modules");
 +   P_SYM(p_module_kset)      = (struct kset **)P_SYM(p_kallsyms_lookup_name)("module_kset");
 +
-+
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,12,0)
++   P_SYM(p_module_mutex)     = (struct mutex *)P_SYM(p_kallsyms_lookup_name)("module_mutex");
++   P_SYM(p_find_module)      = (struct module* (*)(const char *))P_SYM(p_kallsyms_lookup_name)("find_module");
++#else
++   P_SYM(p_module_mutex)     = (struct mutex *)&module_mutex;
++   P_SYM(p_find_module)      = (struct module* (*)(const char *))find_module;
++#endif
 +
 +   // DEBUG
 +   p_debug_log(P_LKRG_DBG, "<p_kmod_init> "
@@ -16183,7 +16280,7 @@ index 000000000000..1c4fecd75b97
 +                                                            (unsigned long)P_SYM(p_ddebug_remove_module_ptr),
 + #endif
 +#endif
-+                                                            (long)&module_mutex,
++                                                            (unsigned long)P_SYM(p_module_mutex),
 +                                                            (unsigned long)P_SYM(p_global_modules),
 +                                                            (unsigned long)P_SYM(p_module_kset));
 +
@@ -16206,6 +16303,18 @@ index 000000000000..1c4fecd75b97
 +   if (!P_SYM(p_module_kset)) {
 +      p_print_log(P_LKRG_ERR,
 +             "KMOD error! Can't find 'module_kset' variable :( Exiting...\n");
++      return P_LKRG_GENERAL_ERROR;
++   }
++
++   if (!P_SYM(p_module_mutex)) {
++      p_print_log(P_LKRG_ERR,
++             "KMOD error! Can't find 'module_mutex' variable :( Exiting...\n");
++      return P_LKRG_GENERAL_ERROR;
++   }
++
++   if (!P_SYM(p_find_module)) {
++      p_print_log(P_LKRG_ERR,
++             "KMOD error! Can't find 'find_module' function :( Exiting...\n");
 +      return P_LKRG_GENERAL_ERROR;
 +   }
 +
@@ -18257,7 +18366,7 @@ index 000000000000..1dcdbad6116b
 +#endif
 diff --git a/security/lkrg/modules/self-defense/hiding/p_hiding.c b/security/lkrg/modules/self-defense/hiding/p_hiding.c
 new file mode 100644
-index 000000000000..a53973232959
+index 000000000000..393549df1615
 --- /dev/null
 +++ b/security/lkrg/modules/self-defense/hiding/p_hiding.c
 @@ -0,0 +1,114 @@
@@ -18302,7 +18411,7 @@ index 000000000000..a53973232959
 +*/
 +
 +   /* We are heavily consuming module list here - take 'module_mutex' */
-+   mutex_lock(&module_mutex);
++   mutex_lock(P_SYM(p_module_mutex));
 +   spin_lock(&p_db_lock);
 +
 +   P_HIDE_FROM_MODULE_LIST(P_SYM(p_find_me));
@@ -18328,7 +18437,7 @@ index 000000000000..a53973232959
 +
 +   spin_unlock(&p_db_lock);
 +   /* Release the 'module_mutex' */
-+   mutex_unlock(&module_mutex);
++   mutex_unlock(P_SYM(p_module_mutex));
 +}
 +
 +#ifdef P_LKRG_UNHIDE
@@ -18346,7 +18455,7 @@ index 000000000000..a53973232959
 +   }
 +
 +   /* We are heavily consuming module list here - take 'module_mutex' */
-+   mutex_lock(&module_mutex);
++   mutex_lock(P_SYM(p_module_mutex));
 +   spin_lock(&p_db_lock);
 +
 +   P_UNHIDE_FROM_MODULE_LIST(P_SYM(p_find_me),P_SYM(p_global_modules));
@@ -18372,7 +18481,7 @@ index 000000000000..a53973232959
 +
 +   spin_unlock(&p_db_lock);
 +   /* Release the 'module_mutex' */
-+   mutex_unlock(&module_mutex);
++   mutex_unlock(P_SYM(p_module_mutex));
 +}
 +#endif
 diff --git a/security/lkrg/modules/self-defense/hiding/p_hiding.h b/security/lkrg/modules/self-defense/hiding/p_hiding.h
@@ -18527,10 +18636,10 @@ index 000000000000..03a846425557
 +#endif
 diff --git a/security/lkrg/modules/wrap/p_struct_wrap.h b/security/lkrg/modules/wrap/p_struct_wrap.h
 new file mode 100644
-index 000000000000..4fcf66e66c74
+index 000000000000..3edc0a115839
 --- /dev/null
 +++ b/security/lkrg/modules/wrap/p_struct_wrap.h
-@@ -0,0 +1,625 @@
+@@ -0,0 +1,765 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -18675,12 +18784,12 @@ index 000000000000..4fcf66e66c74
 +
 +#ifdef CONFIG_HAVE_ARCH_JUMP_LABEL_RELATIVE
 +
-+static inline unsigned long long p_jump_entry_code(const struct jump_entry *entry) {
-+    return (unsigned long long)&entry->code + entry->code;
++static inline unsigned long p_jump_entry_code(const struct jump_entry *entry) {
++    return (unsigned long)((unsigned long)&entry->code + entry->code);
 +}
 +
-+static inline unsigned long long p_jump_entry_target(const struct jump_entry *entry) {
-+    return (unsigned long long)&entry->target + entry->target;
++static inline unsigned long p_jump_entry_target(const struct jump_entry *entry) {
++    return (unsigned long)((unsigned long)&entry->target) + entry->target;
 +}
 +
 +static inline struct static_key *p_jump_entry_key(const struct jump_entry *entry) {
@@ -18691,12 +18800,12 @@ index 000000000000..4fcf66e66c74
 +
 +#else
 +
-+static inline unsigned long long p_jump_entry_code(const struct jump_entry *entry) {
-+    return (unsigned long long)entry->code;
++static inline unsigned long p_jump_entry_code(const struct jump_entry *entry) {
++    return (unsigned long)entry->code;
 +}
 +
-+static inline unsigned long long p_jump_entry_target(const struct jump_entry *entry) {
-+    return (unsigned long long)entry->target;
++static inline unsigned long p_jump_entry_target(const struct jump_entry *entry) {
++    return (unsigned long)entry->target;
 +}
 +
 +static inline struct static_key *p_jump_entry_key(const struct jump_entry *entry)  {
@@ -18733,6 +18842,7 @@ index 000000000000..4fcf66e66c74
 +/*
 + * Get
 + */
++ #if defined(CONFIG_X86_64)
 +static inline unsigned long p_regs_get_arg1(struct pt_regs *p_regs) {
 +   return p_regs->di;
 +}
@@ -18780,9 +18890,67 @@ index 000000000000..4fcf66e66c74
 +#endif
 +}
 +
++ #else
++
++static inline unsigned long p_regs_get_arg1(struct pt_regs *p_regs) {
++   return p_regs->ax;
++}
++
++static inline unsigned long p_regs_get_arg2(struct pt_regs *p_regs) {
++   return p_regs->dx;
++}
++
++static inline unsigned long p_regs_get_arg3(struct pt_regs *p_regs) {
++   return p_regs->cx;
++}
++
++static inline unsigned long p_regs_get_fp(struct pt_regs *p_regs) {
++   return p_regs->bp;
++}
++
++static inline unsigned long p_regs_get_sp(struct pt_regs *p_regs) {
++   return p_regs->sp;
++}
++
++static inline unsigned long p_regs_get_ip(struct pt_regs *p_regs) {
++   return p_regs->ip;
++}
++
++static inline unsigned long p_regs_get_ret(struct pt_regs *p_regs) {
++   return p_regs->ax;
++}
++
++static inline unsigned long p_get_thread_sp(struct task_struct *p_arg) {
++   return p_arg->thread.sp;
++}
++
++/*
++ * Syscalls
++ */
++static inline unsigned long p_syscall_get_arg1(struct pt_regs *p_regs) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0) && defined(CONFIG_ARCH_HAS_SYSCALL_WRAPPER)
++   return p_regs_get_arg2((struct pt_regs *)p_regs_get_arg1(p_regs));
++#else
++   return p_regs_get_arg2(p_regs);
++#endif
++}
++
++static inline unsigned long p_syscall_get_arg2(struct pt_regs *p_regs) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0) && defined(CONFIG_ARCH_HAS_SYSCALL_WRAPPER)
++   return p_regs_get_arg3((struct pt_regs *)p_regs_get_arg1(p_regs));
++#else
++   return p_regs_get_arg3(p_regs);
++#endif
++}
++
++ #endif
++
++
 +/*
 + * Set
 + */
++ #if defined(CONFIG_X86_64)
++
 +static inline void p_regs_set_arg1(struct pt_regs *p_regs, unsigned long p_val) {
 +   p_regs->di = p_val;
 +}
@@ -18814,36 +18982,93 @@ index 000000000000..4fcf66e66c74
 +#endif
 +}
 +
++ #else
++
++static inline void p_regs_set_arg1(struct pt_regs *p_regs, unsigned long p_val) {
++   p_regs->ax = p_val;
++}
++
++static inline void p_regs_set_arg2(struct pt_regs *p_regs, unsigned long p_val) {
++   p_regs->dx = p_val;
++}
++
++static inline void p_regs_set_arg3(struct pt_regs *p_regs, unsigned long p_val) {
++   p_regs->cx = p_val;
++}
++
++static inline void p_regs_set_ip(struct pt_regs *p_regs, unsigned long p_val) {
++   p_regs->ip = p_val;
++}
++
++/*
++ * Syscalls
++ */
++static inline void p_syscall_set_arg1(struct pt_regs *p_regs, unsigned long p_val) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0) && defined(CONFIG_ARCH_HAS_SYSCALL_WRAPPER)
++   p_regs_set_arg2((struct pt_regs *)p_regs_get_arg1(p_regs), p_val);
++#else
++   p_regs_set_arg2(p_regs, p_val);
++#endif
++}
++
++static inline void p_syscall_set_arg2(struct pt_regs *p_regs, unsigned long p_val) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0) && defined(CONFIG_ARCH_HAS_SYSCALL_WRAPPER)
++   p_regs_set_arg3((struct pt_regs *)p_regs_get_arg1(p_regs), p_val);
++#else
++   p_regs_set_arg3(p_regs, p_val);
++#endif
++}
++
++ #endif
++
++
 +static inline int p_set_memory_rw(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return P_SYM(p_kernel_set_memory_rw)(p_addr, p_numpages);
++#else
 +   return P_SYM(p_change_page_attr_set_clr)(&p_addr, p_numpages,
 +                                            __pgprot(_PAGE_RW),
 +                                            __pgprot(0),
 +                                            0, 0, NULL);
++#endif
 +}
 +
 +static inline int p_set_memory_ro(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return P_SYM(p_kernel_set_memory_ro)(p_addr, p_numpages);
++#else
 +   return P_SYM(p_change_page_attr_set_clr)(&p_addr, p_numpages,
 +                                            __pgprot(0),
 +                                            __pgprot(_PAGE_RW),
 +                                            0, 0, NULL);
++#endif
 +}
 +
 +static inline int p_set_memory_np(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return 0x0;
++//   return P_SYM(p_kernel_set_memory_np)(p_addr, p_numpages);
++#else
 +   return P_SYM(p_change_page_attr_set_clr)(&p_addr, p_numpages,
 +                                            __pgprot(0),
 +                                            __pgprot(_PAGE_PRESENT),
 +                                            0, 0, NULL);
++#endif
 +}
 +
 +static inline int p_set_memory_p(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return 0x0;
++#else
 +   return P_SYM(p_change_page_attr_set_clr)(&p_addr, p_numpages,
 +                                            __pgprot(_PAGE_PRESENT),
 +                                            __pgprot(0),
 +                                            0, 0, NULL);
++#endif
 +}
 +
 +static inline void p_lkrg_open_rw_x86(void) {
@@ -18980,16 +19205,24 @@ index 000000000000..4fcf66e66c74
 +
 +static inline int p_set_memory_rw(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return P_SYM(p_kernel_set_memory_rw)(p_addr, p_numpages);
++#else
 +   return P_SYM(p_change_memory_common)(p_addr, p_numpages,
 +                                        __pgprot(0),
 +                                        __pgprot(L_PTE_RDONLY));
++#endif
 +}
 +
 +static inline int p_set_memory_ro(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return P_SYM(p_kernel_set_memory_ro)(p_addr, p_numpages);
++#else
 +   return P_SYM(p_change_memory_common)(p_addr, p_numpages,
 +                                        __pgprot(L_PTE_RDONLY),
 +                                        __pgprot(0));
++#endif
 +}
 +
 +static inline void p_lkrg_open_rw(void) {
@@ -19104,30 +19337,46 @@ index 000000000000..4fcf66e66c74
 +
 +static inline int p_set_memory_rw(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return P_SYM(p_kernel_set_memory_rw)(p_addr, p_numpages);
++#else
 +   return P_SYM(p_change_memory_common)(p_addr, p_numpages,
 +                                        __pgprot(PTE_WRITE),
 +                                        __pgprot(PTE_RDONLY));
++#endif
 +}
 +
 +static inline int p_set_memory_ro(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return P_SYM(p_kernel_set_memory_ro)(p_addr, p_numpages);
++#else
 +   return P_SYM(p_change_memory_common)(p_addr, p_numpages,
 +                                        __pgprot(PTE_RDONLY),
 +                                        __pgprot(PTE_WRITE));
++#endif
 +}
 +
 +static inline int p_set_memory_np(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return P_SYM(p_kernel_set_memory_valid)(p_addr, p_numpages, 0);
++#else
 +   return P_SYM(p_change_memory_common)(p_addr, p_numpages,
 +                                        __pgprot(0),
 +                                        __pgprot(PTE_VALID));
++#endif
 +}
 +
 +static inline int p_set_memory_p(unsigned long p_addr, int p_numpages) {
 +
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   return P_SYM(p_kernel_set_memory_valid)(p_addr, p_numpages, 1);
++#else
 +   return P_SYM(p_change_memory_common)(p_addr, p_numpages,
 +                                        __pgprot(PTE_VALID),
 +                                        __pgprot(0));
++#endif
 +}
 +
 +static inline void p_lkrg_open_rw(void) {
@@ -19158,10 +19407,10 @@ index 000000000000..4fcf66e66c74
 +#endif
 diff --git a/security/lkrg/p_lkrg_main.c b/security/lkrg/p_lkrg_main.c
 new file mode 100644
-index 000000000000..4a3645a7c3e3
+index 000000000000..3edf596c68da
 --- /dev/null
 +++ b/security/lkrg/p_lkrg_main.c
-@@ -0,0 +1,736 @@
+@@ -0,0 +1,779 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -19211,7 +19460,7 @@ index 000000000000..4a3645a7c3e3
 +
 +p_ro_page p_ro __p_lkrg_read_only = {
 +
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +   .p_marker_np1 = P_LKRG_MARKER1,
 +#endif
 +
@@ -19242,7 +19491,7 @@ index 000000000000..4a3645a7c3e3
 +      .p_profile_enforce = 2              // profile_enforce
 +   },
 +
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +   .p_marker_np2 = P_LKRG_MARKER1,
 +   .p_marker_np3 = P_LKRG_MARKER2
 +#endif
@@ -19253,13 +19502,13 @@ index 000000000000..4a3645a7c3e3
 +static void p_init_page_attr(void) {
 +
 +   unsigned long *p_long_tmp = 0;
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +   unsigned long p_long_offset = PAGE_SIZE/sizeof(p_long_tmp); // On purpose sizeof pointer
 +#endif
 +
 +   p_long_tmp = (unsigned long *)P_CTRL_ADDR;
 +
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +   if (*(p_long_tmp-p_long_offset) == P_LKRG_MARKER1) {
 +      p_print_log(P_LKRG_INFO, "Found marker before configuration page.\n");
 +      if (*(p_long_tmp+p_long_offset) == P_LKRG_MARKER1) {
@@ -19269,7 +19518,7 @@ index 000000000000..4a3645a7c3e3
 +         p_set_memory_ro((unsigned long)p_long_tmp,1);
 +         p_print_log(P_LKRG_INFO, "Configuration page marked read-only.\n");
 +         p_attr_init++;
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +         p_set_memory_np((unsigned long)(p_long_tmp-p_long_offset),1);
 +         p_print_log(P_LKRG_INFO, "Setup guard page before configuration page.\n");
 +         if (*(p_long_tmp+p_long_offset*2) == P_LKRG_MARKER2) {
@@ -19286,7 +19535,7 @@ index 000000000000..4a3645a7c3e3
 +         flush_tlb_all();
 +#endif
 +
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +      }
 +   } else {
 +      p_print_log(P_LKRG_CRIT,
@@ -19314,7 +19563,7 @@ index 000000000000..4a3645a7c3e3
 +static void p_uninit_page_attr(void) {
 +
 +   unsigned long *p_long_tmp = 0;
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +   unsigned long p_long_offset = PAGE_SIZE/sizeof(p_long_tmp); // On purpose sizeof pointer
 +#endif
 +
@@ -19322,7 +19571,7 @@ index 000000000000..4a3645a7c3e3
 +      p_long_tmp = (unsigned long *)P_CTRL_ADDR;
 +      p_set_memory_rw((unsigned long)p_long_tmp,1);
 +      p_print_log(P_LKRG_INFO, "Configuration page marked read-write.\n");
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +      p_set_memory_p((unsigned long)(p_long_tmp-p_long_offset),1);
 +      p_print_log(P_LKRG_INFO, "Disabled guard page before configuration page.\n");
 +      p_set_memory_rw((unsigned long)(p_long_tmp-p_long_offset),1);
@@ -19576,7 +19825,8 @@ index 000000000000..4a3645a7c3e3
 +      goto p_main_error;
 +   }
 +
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
++#if defined(CONFIG_X86)
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
 +   P_SYM(p_native_write_cr4) = (void (*)(unsigned long))P_SYM(p_kallsyms_lookup_name)("native_write_cr4");
 +
 +   if (!P_SYM(p_native_write_cr4)) {
@@ -19585,6 +19835,7 @@ index 000000000000..4a3645a7c3e3
 +      p_ret = P_LKRG_GENERAL_ERROR;
 +      goto p_main_error;
 +   }
++ #endif
 +#endif
 +
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
@@ -19607,6 +19858,7 @@ index 000000000000..4a3645a7c3e3
 +   }
 +#endif
 +
++#if defined(CONFIG_OPTPROBES)
 +   P_SYM(p_wait_for_kprobe_optimizer) = (void (*)(void))P_SYM(p_kallsyms_lookup_name)("wait_for_kprobe_optimizer");
 +
 +   if (!P_SYM(p_wait_for_kprobe_optimizer)) {
@@ -19615,6 +19867,7 @@ index 000000000000..4a3645a7c3e3
 +      p_ret = P_LKRG_GENERAL_ERROR;
 +      goto p_main_error;
 +   }
++#endif
 +
 +   // Freeze all non-kernel processes
 +   while (P_SYM(p_freeze_processes)())
@@ -19691,8 +19944,51 @@ index 000000000000..4a3645a7c3e3
 +#endif
 +
 +
-+#if defined(CONFIG_X86)
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
 +
++   P_SYM(p_kernel_set_memory_ro) = (int (*)(unsigned long, int))
++                            P_SYM(p_kallsyms_lookup_name)("set_memory_ro");
++   if (!P_SYM(p_kernel_set_memory_ro)) {
++      p_print_log(P_LKRG_ERR,
++             "ERROR: Can't find 'set_memory_ro' function :( Exiting...\n");
++      p_ret = P_LKRG_GENERAL_ERROR;
++      goto p_main_error;
++   }
++
++   P_SYM(p_kernel_set_memory_rw) = (int (*)(unsigned long, int))
++                            P_SYM(p_kallsyms_lookup_name)("set_memory_rw");
++   if (!P_SYM(p_kernel_set_memory_rw)) {
++      p_print_log(P_LKRG_ERR,
++             "ERROR: Can't find 'set_memory_rw' function :( Exiting...\n");
++      p_ret = P_LKRG_GENERAL_ERROR;
++      goto p_main_error;
++   }
++
++ #if defined(CONFIG_X86)
++   ;
++/*
++   P_SYM(p_kernel_set_memory_np) = (int (*)(unsigned long, int))
++                            P_SYM(p_kallsyms_lookup_name)("set_memory_np");
++   if (!P_SYM(p_kernel_set_memory_np)) {
++      p_print_log(P_LKRG_ERR,
++             "ERROR: Can't find 'set_memory_np' function :( Exiting...\n");
++      p_ret = P_LKRG_GENERAL_ERROR;
++      goto p_main_error;
++   }
++*/
++ #elif defined(CONFIG_ARM64)
++   P_SYM(p_kernel_set_memory_valid) = (int (*)(unsigned long, int, int))
++                               P_SYM(p_kallsyms_lookup_name)("set_memory_valid");
++   if (!P_SYM(p_kernel_set_memory_valid)) {
++      p_print_log(P_LKRG_ERR,
++             "ERROR: Can't find 'set_memory_valid' function :( Exiting...\n");
++      p_ret = P_LKRG_GENERAL_ERROR;
++      goto p_main_error;
++   }
++ #endif
++
++#else
++ #if defined(CONFIG_X86)
 +   P_SYM(p_change_page_attr_set_clr) =
 +          (int (*)(unsigned long *, int, pgprot_t, pgprot_t, int, int, struct page **))
 +          P_SYM(p_kallsyms_lookup_name)("change_page_attr_set_clr");
@@ -19703,9 +19999,7 @@ index 000000000000..4a3645a7c3e3
 +      p_ret = P_LKRG_GENERAL_ERROR;
 +      goto p_main_error;
 +   }
-+
-+#elif defined(CONFIG_ARM) || defined(CONFIG_ARM64)
-+
++ #elif defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 +   P_SYM(p_change_memory_common) =
 +          (int (*)(unsigned long, int, pgprot_t, pgprot_t))
 +          P_SYM(p_kallsyms_lookup_name)("change_memory_common");
@@ -19716,13 +20010,11 @@ index 000000000000..4a3645a7c3e3
 +      p_ret = P_LKRG_GENERAL_ERROR;
 +      goto p_main_error;
 +   }
-+
-+#else
-+
++ #else
 +   p_print_log(P_LKRG_CRIT, "UNSUPPORTED PLATFORM! Exiting...\n");
 +   p_ret = P_LKRG_GENERAL_ERROR;
 +   goto p_main_error;
-+
++ #endif
 +#endif
 +
 +   if (p_register_comm_channel()) {
@@ -19900,10 +20192,10 @@ index 000000000000..4a3645a7c3e3
 +MODULE_LICENSE("GPL v2");
 diff --git a/security/lkrg/p_lkrg_main.h b/security/lkrg/p_lkrg_main.h
 new file mode 100644
-index 000000000000..6dbdb3cc81ce
+index 000000000000..000296647837
 --- /dev/null
 +++ b/security/lkrg/p_lkrg_main.h
-@@ -0,0 +1,358 @@
+@@ -0,0 +1,393 @@
 +/*
 + * pi3's Linux kernel Runtime Guard
 + *
@@ -19998,6 +20290,15 @@ index 000000000000..6dbdb3cc81ce
 +#include <linux/sched/task_stack.h>
 +#endif
 +
++/*
++ * Some custom compilation of the kernel might aggresively inline
++ * critical functions (from LKRG perspective). That's problematic
++ * for the project. However, some of the problems *might* be solved
++ * by uncommenting following definition. However, not all of them
++ * so you need to experiment.
++ */
++//#define P_KERNEL_AGGRESSIVE_INLINING 1
++
 +//#define p_lkrg_read_only __attribute__((__section__(".data..p_lkrg_read_only"),aligned(PAGE_SIZE)))
 +#define __p_lkrg_read_only __attribute__((__section__(".p_lkrg_read_only")))
 +
@@ -20007,6 +20308,10 @@ index 000000000000..6dbdb3cc81ce
 +#else
 + #define P_LKRG_MARKER1 0x3369705f
 + #define P_LKRG_MARKER2 0xdeadbabe
++#endif
++
++#if defined(CONFIG_SECURITY_SELINUX_DEVELOP) && !defined(CONFIG_GCC_PLUGIN_RANDSTRUCT)
++#define P_SELINUX_VERIFY
 +#endif
 +
 +#define nitems(val)      (sizeof(val) / sizeof(val[0]))
@@ -20050,14 +20355,26 @@ index 000000000000..6dbdb3cc81ce
 +#if !defined(CONFIG_ARM64)
 +   void (*p_flush_tlb_all)(void);
 +#endif
-+#if defined(CONFIG_X86)
++
++#if defined(P_KERNEL_AGGRESSIVE_INLINING)
++   int (*p_kernel_set_memory_ro)(unsigned long addr, int numpages);
++   int (*p_kernel_set_memory_rw)(unsigned long addr, int numpages);
++ #if defined(CONFIG_X86)
++   ;
++//   int (*p_kernel_set_memory_np)(unsigned long addr, int numpages);
++ #elif defined(CONFIG_ARM64)
++   int (*p_kernel_set_memory_valid)(unsigned long addr, int numpages, int enable);
++ #endif
++#else
++ #if defined(CONFIG_X86)
 +   int (*p_change_page_attr_set_clr)(unsigned long *addr, int numpages,
 +                                     pgprot_t mask_set, pgprot_t mask_clr,
 +                                     int force_split, int in_flag,
 +                                     struct page **pages);
-+#elif defined(CONFIG_ARM) || defined(CONFIG_ARM64)
++ #elif defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 +   int (*p_change_memory_common)(unsigned long addr, int numpages,
 +                                 pgprot_t set_mask, pgprot_t clear_mask);
++ #endif
 +#endif
 +   int (*p_is_kernel_text_address)(unsigned long p_addr);
 +   void (*p_get_seccomp_filter)(struct task_struct *p_task);
@@ -20070,7 +20387,7 @@ index 000000000000..6dbdb3cc81ce
 +#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
 +   int *p_selinux_enabled;
 +#endif
-+#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
++#ifdef P_SELINUX_VERIFY
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
 +   struct p_selinux_state *p_selinux_state;
 +#else
@@ -20093,13 +20410,17 @@ index 000000000000..6dbdb3cc81ce
 +#endif
 +   struct list_head *p_global_modules;
 +   struct kset **p_module_kset;
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
++#if defined(CONFIG_X86)
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
 +   void (*p_native_write_cr4)(unsigned long p_val);
++ #endif
 +#endif
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
 +   struct module* (*p_module_address)(unsigned long p_val);
 +   struct module* (*p_module_text_address)(unsigned long p_val);
 +#endif
++   struct module* (*p_find_module)(const char *name);
++   struct mutex *p_module_mutex;
 +   int (*p_kallsyms_on_each_symbol)(int (*)(void *, const char *, struct module *, unsigned long), void *);
 +#if defined(CONFIG_FUNCTION_TRACER)
 +   struct ftrace_rec_iter *(*p_ftrace_rec_iter_start)(void);
@@ -20107,7 +20428,9 @@ index 000000000000..6dbdb3cc81ce
 +   struct dyn_ftrace *(*p_ftrace_rec_iter_record)(struct ftrace_rec_iter *iter);
 +   struct mutex *p_ftrace_lock;
 +#endif
++#if defined(CONFIG_OPTPROBES)
 +   void (*p_wait_for_kprobe_optimizer)(void);
++#endif
 +   struct module *p_find_me;
 +   unsigned int p_state_init;
 +
@@ -20129,13 +20452,13 @@ index 000000000000..6dbdb3cc81ce
 +
 +typedef struct _p_lkrg_ro_page {
 +
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +   unsigned long p_marker_np1 __attribute__((aligned(PAGE_SIZE)));
 +#endif
 +
 +   p_lkrg_global_ctrl_struct p_lkrg_global_ctrl;
 +
-+#if !defined(CONFIG_ARM)
++#if !defined(CONFIG_ARM) && (!defined(P_KERNEL_AGGRESSIVE_INLINING) && defined(CONFIG_X86))
 +   unsigned long p_marker_np2 __attribute__((aligned(PAGE_SIZE)));
 +   unsigned long p_marker_np3 __attribute__((aligned(PAGE_SIZE)));
 +#endif
@@ -20259,6 +20582,10 @@ index 000000000000..6dbdb3cc81ce
 + * so let's only do that for something truly important, which the below is not.
 + */
 +// #warning "LKRG does NOT require CONFIG_STACKTRACE. However, in case of pCFI violation, LKRG won't be able to dump full stack-trace."
++#endif
++
++#if defined(CONFIG_PREEMPT_RT)
++ #error "LKRG does not support RT kernels (PREEMPT_RT is enabled)"
 +#endif
 +
 +#endif
